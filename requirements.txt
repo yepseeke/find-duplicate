@@ -1,0 +1,9 @@
+nltk
+torch
+safetensors
+tqdm
+sentence-transformers
+python-Levenshtein
+pandas
+numpy
+retsim-pytorch
