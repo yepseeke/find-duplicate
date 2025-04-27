@@ -21,23 +21,10 @@ device = torch.device(device)
 BATCH_SIZE = 12
 
 
-def build_image_index(root_folder):
-    image_index = {}
-    all_files = []
-    for subdir, _, files in os.walk(root_folder):
-        for file in files:
-            if file.endswith('.jpg'):
-                all_files.append(os.path.join(subdir, file))
+def find_image_path(image_folder_path, image_hash):
+    image_path = os.path.join(image_folder_path, image_hash + ".jpg")
 
-    for file_path in tqdm(all_files, desc="Building image index", unit="image"):
-        image_hash = os.path.basename(file_path).split('.')[0]
-        image_index[image_hash] = file_path
-
-    return image_index
-
-
-def find_image_path(image_index, image_hash):
-    return image_index.get(image_hash, None)
+    return image_path
 
 
 def remove_emojis(text):
@@ -62,7 +49,7 @@ def encode_image_safe(image_path):
         img = Image.open(image_path).convert('RGB')
     except (UnidentifiedImageError, OSError):
         return torch.tensor(np.zeros(512, dtype=np.float32), device=device)
-
+    print(1)
     inputs = clip_image_processor(images=img, return_tensors="pt").to(device)
     with torch.no_grad():
         embeddings = clip_model.get_image_features(**inputs)
@@ -75,7 +62,7 @@ def batch_cosine_sim(a, b):
     return (a @ b.T).diagonal()
 
 
-def compute_clip_features(df, image_index):
+def compute_clip_features(df, image_folder_path):
     features = []
 
     for batch_start in tqdm(range(0, len(df), BATCH_SIZE), desc="Computing CLIP features"):
@@ -89,10 +76,10 @@ def compute_clip_features(df, image_index):
         base_image_vecs = []
         cand_image_vecs = []
         for idx, row in batch_df.iterrows():
-            base_image_path = find_image_path(image_index, row['base_title_image'])
+            base_image_path = find_image_path(image_folder_path, row['base_title_image'])
             base_image_vecs.append(encode_image_safe(base_image_path))
 
-            cand_image_path = find_image_path(image_index, row['cand_title_image'])
+            cand_image_path = find_image_path(image_folder_path, row['cand_title_image'])
             cand_image_vecs.append(encode_image_safe(cand_image_path))
 
         base_image_vecs = torch.stack(base_image_vecs)
@@ -143,8 +130,6 @@ def main(parquet_path, image_folder_path):
     print(f"Loading DataFrame from {parquet_path}")
     df = pd.read_parquet(parquet_path)
 
-    print("Computing image tree")
-    image_index = build_image_index(image_folder_path)
 
     print("Computing CLIP features...")
     df_with_features = compute_clip_features(df, image_index)
