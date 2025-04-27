@@ -11,7 +11,6 @@ from transformers import CLIPProcessor, CLIPTokenizer, CLIPModel, CLIPImageProce
 from tqdm import tqdm
 from sentence_transformers import SentenceTransformer, util
 
-
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
 clip_text_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
@@ -130,9 +129,8 @@ def main(parquet_path, image_folder_path):
     print(f"Loading DataFrame from {parquet_path}")
     df = pd.read_parquet(parquet_path)
 
-
     print("Computing CLIP features...")
-    df_with_features = compute_clip_features(df, image_index)
+    df_with_features = compute_clip_features(df, image_folder_path)
 
     output_path = os.path.splitext(parquet_path)[0] + "_with_features.csv"
     print(f"Saving result to {output_path}")
