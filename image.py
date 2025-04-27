@@ -6,87 +6,124 @@ import torch
 import pandas as pd
 import numpy as np
 
-from PIL import Image
-from transformers import CLIPProcessor, CLIPModel
+from PIL import Image, UnidentifiedImageError
+from transformers import CLIPProcessor, CLIPTokenizer, CLIPModel, CLIPImageProcessor, CLIPImageProcessorFast
 from tqdm import tqdm
 from sentence_transformers import SentenceTransformer, util
 
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
-clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+clip_text_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+clip_image_processor = CLIPImageProcessorFast.from_pretrained("openai/clip-vit-base-patch32", use_fast=True)
 device = torch.device(device)
+
+BATCH_SIZE = 12
+
+
+def build_image_index(root_folder):
+    image_index = {}
+    for subdir, _, files in os.walk(root_folder):
+        for file in files:
+            if file.endswith('.jpg'):
+                image_hash = file.split('.')[0]
+                image_index[image_hash] = os.path.join(subdir, file)
+    return image_index
+
+
+def find_image_path(image_index, image_hash):
+    return image_index.get(image_hash, None)
+
 
 def remove_emojis(text):
     cleaned_text = re.sub(r'[^\w\s.,!?;:\'\"]+', '', text)
     return cleaned_text
 
 
-def find_image_path(root_folder, image_hash):
-    for folder_name in os.listdir(root_folder):
-        folder_path = os.path.join(root_folder, folder_name)
-        if os.path.isdir(folder_path):
-            for file in os.listdir(folder_path):
-                if file.startswith(image_hash) and file.endswith(".jpg"):
-                    return os.path.join(folder_path, file)
-    return None
-
-
 @torch.no_grad()
-def encode_text(text):
-    text = text[0] if text is not None else ""
-
-    text = remove_emojis(text)
-    text = text.replace("\n", " ").replace('-', "")
-
-    inputs = clip_processor(text=[text], return_tensors="pt", padding=True, truncation=True).to(device)
+def encode_text_batch(texts):
+    cleaned_texts = [remove_emojis(t).replace("\n", " ").replace('-', "") if t is not None else "" for t in texts]
+    inputs = clip_text_processor(text=cleaned_texts, return_tensors="pt", padding=True, truncation=True).to(device)
     embeddings = clip_model.get_text_features(**inputs)
-    return embeddings.squeeze(0)
+    return embeddings
 
 
 @torch.no_grad()
 def encode_image_safe(image_path):
     if image_path is None or not os.path.exists(image_path):
         return torch.tensor(np.zeros(512, dtype=np.float32), device=device)
-    else:
+
+    try:
         img = Image.open(image_path).convert('RGB')
-        inputs = clip_processor(images=img, return_tensors="pt").to(device)
-        with torch.no_grad():
-            embeddings = clip_model.get_image_features(**inputs)
-        return embeddings.squeeze(0)
+    except (UnidentifiedImageError, OSError):
+        return torch.tensor(np.zeros(512, dtype=np.float32), device=device)
+
+    inputs = clip_image_processor(images=img, return_tensors="pt").to(device)
+    with torch.no_grad():
+        embeddings = clip_model.get_image_features(**inputs)
+    return embeddings.squeeze(0)
 
 
-def cosine_similarity(vec1, vec2):
-    return util.cos_sim(vec1, vec2).item()
+def batch_cosine_sim(a, b):
+    a = torch.nn.functional.normalize(a, p=2, dim=1)
+    b = torch.nn.functional.normalize(b, p=2, dim=1)
+    return (a @ b.T).diagonal()
 
 
 def compute_clip_features(df, image_root_folder):
     features = []
+    image_index = build_image_index(image_root_folder)
 
-    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Computing CLIP features"):
-        base_title_vec = encode_text([row['base_title']]).squeeze(0)
-        base_description_vec = encode_text([row['base_description']]).squeeze(0)
-        base_image_path = find_image_path(image_root_folder, row['base_title_image'])
-        base_image_vec = encode_image_safe(base_image_path)
+    for batch_start in tqdm(range(0, len(df), BATCH_SIZE), desc="Computing CLIP features"):
+        batch_df = df.iloc[batch_start:batch_start + BATCH_SIZE]
 
-        cand_title_vec = encode_text([row['cand_title']]).squeeze(0)
-        cand_description_vec = encode_text([row['cand_description']]).squeeze(0)
-        cand_image_path = find_image_path(image_root_folder, row['cand_title_image'])
-        cand_image_vec = encode_image_safe(cand_image_path)
+        base_titles = batch_df['base_title'].tolist()
+        base_descriptions = batch_df['base_description'].tolist()
+        cand_titles = batch_df['cand_title'].tolist()
+        cand_descriptions = batch_df['cand_description'].tolist()
 
-        feature_vector = [
-            cosine_similarity(base_title_vec, cand_title_vec),
-            cosine_similarity(base_title_vec, cand_description_vec),
-            cosine_similarity(base_title_vec, cand_image_vec),
-            cosine_similarity(base_description_vec, cand_title_vec),
-            cosine_similarity(base_description_vec, cand_description_vec),
-            cosine_similarity(base_description_vec, cand_image_vec),
-            cosine_similarity(base_image_vec, cand_title_vec),
-            cosine_similarity(base_image_vec, cand_description_vec),
-            cosine_similarity(base_image_vec, cand_image_vec),
-        ]
+        base_image_vecs = []
+        cand_image_vecs = []
+        for idx, row in batch_df.iterrows():
+            base_image_path = find_image_path(image_index, row['base_title_image'])
+            base_image_vecs.append(encode_image_safe(base_image_path))
 
-        features.append(feature_vector)
+            cand_image_path = find_image_path(image_index, row['cand_title_image'])
+            cand_image_vecs.append(encode_image_safe(cand_image_path))
+
+        base_image_vecs = torch.stack(base_image_vecs)
+        cand_image_vecs = torch.stack(cand_image_vecs)
+
+        base_title_vecs = encode_text_batch(base_titles)
+        base_description_vecs = encode_text_batch(base_descriptions)
+        cand_title_vecs = encode_text_batch(cand_titles)
+        cand_description_vecs = encode_text_batch(cand_descriptions)
+
+        title_title_sim = batch_cosine_sim(base_title_vecs, cand_title_vecs)
+        title_desc_sim = batch_cosine_sim(base_title_vecs, cand_description_vecs)
+        title_image_sim = batch_cosine_sim(base_title_vecs, cand_image_vecs)
+
+        desc_title_sim = batch_cosine_sim(base_description_vecs, cand_title_vecs)
+        desc_desc_sim = batch_cosine_sim(base_description_vecs, cand_description_vecs)
+        desc_image_sim = batch_cosine_sim(base_description_vecs, cand_image_vecs)
+
+        image_title_sim = batch_cosine_sim(base_image_vecs, cand_title_vecs)
+        image_desc_sim = batch_cosine_sim(base_image_vecs, cand_description_vecs)
+        image_image_sim = batch_cosine_sim(base_image_vecs, cand_image_vecs)
+
+        batch_features = torch.stack([
+            title_title_sim,
+            title_desc_sim,
+            title_image_sim,
+            desc_title_sim,
+            desc_desc_sim,
+            desc_image_sim,
+            image_title_sim,
+            image_desc_sim,
+            image_image_sim
+        ], dim=1).cpu().numpy()
+
+        features.extend(batch_features)
 
     features_df = pd.DataFrame(features, columns=[
         "clip-title-title", "clip-title-description", "clip-title-image",
