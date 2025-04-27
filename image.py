@@ -8,6 +8,7 @@ import numpy as np
 
 from PIL import Image
 from transformers import CLIPProcessor, CLIPModel
+from tqdm import tqdm
 from sentence_transformers import SentenceTransformer, util
 
 
@@ -36,7 +37,7 @@ def encode_text(text):
     text = text[0] if text is not None else ""
 
     text = remove_emojis(text)
-    text = text.replace("\n", "").replace('-', "")
+    text = text.replace("\n", " ").replace('-', "")
 
     inputs = clip_processor(text=[text], return_tensors="pt", padding=True, truncation=True).to(device)
     embeddings = clip_model.get_text_features(**inputs)
@@ -62,7 +63,7 @@ def cosine_similarity(vec1, vec2):
 def compute_clip_features(df, image_root_folder):
     features = []
 
-    for idx, row in df.iterrows():
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Computing CLIP features"):
         base_title_vec = encode_text([row['base_title']]).squeeze(0)
         base_description_vec = encode_text([row['base_description']]).squeeze(0)
         base_image_path = find_image_path(image_root_folder, row['base_title_image'])
