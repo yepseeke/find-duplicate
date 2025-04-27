@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import torch
 
@@ -6,25 +7,41 @@ import pandas as pd
 import numpy as np
 
 from PIL import Image
+from transformers import CLIPProcessor, CLIPModel
 from sentence_transformers import SentenceTransformer, util
 
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
-model = SentenceTransformer('clip-ViT-B-32', device=device)
+clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 device = torch.device(device)
+
+def remove_emojis(text):
+    cleaned_text = re.sub(r'[^\w\s.,!?;:\'\"]+', '', text)
+    return cleaned_text
 
 
 def find_image_path(root_folder, image_hash):
-    for subdir, dirs, files in os.walk(root_folder):
-        for file in files:
-            if file.startswith(image_hash):
-                return os.path.join(subdir, file)
+    for folder_name in os.listdir(root_folder):
+        folder_path = os.path.join(root_folder, folder_name)
+        if os.path.isdir(folder_path):
+            for file in os.listdir(folder_path):
+                if file.startswith(image_hash) and file.endswith(".jpg"):
+                    return os.path.join(folder_path, file)
     return None
 
 
 @torch.no_grad()
 def encode_text(text):
-    return model.encode(text, convert_to_tensor=True, use_fast=True)
+    text = text[0] if text is not None else ""
+
+    text = remove_emojis(text)
+    text = text.replace("\n", "").replace('-', "")
+
+    inputs = clip_processor(text=[text], return_tensors="pt", padding=True, truncation=True).to(device)
+    embeddings = clip_model.get_text_features(**inputs)
+    return embeddings.squeeze(0)
+
 
 @torch.no_grad()
 def encode_image_safe(image_path):
@@ -32,8 +49,10 @@ def encode_image_safe(image_path):
         return torch.tensor(np.zeros(512, dtype=np.float32), device=device)
     else:
         img = Image.open(image_path).convert('RGB')
-        img = np.array(img)
-        return model.encode(img, convert_to_tensor=True, use_fast=True)
+        inputs = clip_processor(images=img, return_tensors="pt").to(device)
+        with torch.no_grad():
+            embeddings = clip_model.get_image_features(**inputs)
+        return embeddings.squeeze(0)
 
 
 def cosine_similarity(vec1, vec2):
@@ -69,9 +88,9 @@ def compute_clip_features(df, image_root_folder):
         features.append(feature_vector)
 
     features_df = pd.DataFrame(features, columns=[
-        "title-title", "title-description", "title-image",
-        "description-title", "description-description", "description-image",
-        "image-title", "image-description", "image-image"
+        "clip-title-title", "clip-title-description", "clip-title-image",
+        "clip-description-title", "clip-description-description", "clip-description-image",
+        "clip-image-title", "clip-image-description", "clip-image-image"
     ])
     df = pd.concat([df.reset_index(drop=True), features_df], axis=1)
 
