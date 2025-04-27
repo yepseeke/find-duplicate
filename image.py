@@ -9,8 +9,9 @@ from PIL import Image
 from sentence_transformers import SentenceTransformer, util
 
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
 model = SentenceTransformer('clip-ViT-B-32', device=device)
+device = torch.device(device)
 
 
 def find_image_path(root_folder, image_hash):
@@ -23,16 +24,16 @@ def find_image_path(root_folder, image_hash):
 
 @torch.no_grad()
 def encode_text(text):
-    return model.encode(text, convert_to_tensor=True)
+    return model.encode(text, convert_to_tensor=True, use_fast=True)
 
 @torch.no_grad()
 def encode_image_safe(image_path):
     if image_path is None or not os.path.exists(image_path):
-        return torch.zeros((model.get_sentence_embedding_dimension(),), device=device)
+        return torch.tensor(np.zeros(512, dtype=np.float32), device=device)
     else:
         img = Image.open(image_path).convert('RGB')
         img = np.array(img)
-        return model.encode(img, convert_to_tensor=True)
+        return model.encode(img, convert_to_tensor=True, use_fast=True)
 
 
 def cosine_similarity(vec1, vec2):
