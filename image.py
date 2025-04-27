@@ -23,11 +23,16 @@ BATCH_SIZE = 12
 
 def build_image_index(root_folder):
     image_index = {}
+    all_files = []
     for subdir, _, files in os.walk(root_folder):
         for file in files:
             if file.endswith('.jpg'):
-                image_hash = file.split('.')[0]
-                image_index[image_hash] = os.path.join(subdir, file)
+                all_files.append(os.path.join(subdir, file))
+
+    for file_path in tqdm(all_files, desc="Building image index", unit="image"):
+        image_hash = os.path.basename(file_path).split('.')[0]
+        image_index[image_hash] = file_path
+
     return image_index
 
 
@@ -70,9 +75,8 @@ def batch_cosine_sim(a, b):
     return (a @ b.T).diagonal()
 
 
-def compute_clip_features(df, image_root_folder):
+def compute_clip_features(df, image_index):
     features = []
-    image_index = build_image_index(image_root_folder)
 
     for batch_start in tqdm(range(0, len(df), BATCH_SIZE), desc="Computing CLIP features"):
         batch_df = df.iloc[batch_start:batch_start + BATCH_SIZE]
@@ -139,8 +143,11 @@ def main(parquet_path, image_folder_path):
     print(f"Loading DataFrame from {parquet_path}")
     df = pd.read_parquet(parquet_path)
 
+    print("Computing image tree")
+    image_index = build_image_index(image_folder_path)
+
     print("Computing CLIP features...")
-    df_with_features = compute_clip_features(df, image_folder_path)
+    df_with_features = compute_clip_features(df, image_index)
 
     output_path = os.path.splitext(parquet_path)[0] + "_with_features.csv"
     print(f"Saving result to {output_path}")
