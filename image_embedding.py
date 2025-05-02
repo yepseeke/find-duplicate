@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from torchvision import transforms
+import torchvision.transforms as T
 from PIL import Image
 from tqdm import tqdm
 from pathlib import Path
@@ -14,9 +14,9 @@ from torchvision.models import resnet50, ResNet50_Weights
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 
 
-BATCH_SIZE = 4096
+BATCH_SIZE = 16
 DEVICE = "cuda:1" if torch.cuda.is_available() else "cpu"
-MODEL_NAMES = ['resnet50', 'efficientnet_b0', 'dinov2', 'clip']
+MODEL_NAMES = ['dinov2']
 NUM_WORKERS = 8
 
 import os
@@ -62,11 +62,12 @@ class ImageDataset(torch.utils.data.Dataset):
 
         try:
             img = Image.open(img_path).convert('RGB')
+            img_tensor = T.ToTensor()(img)
             if self.transform:
-                img = self.transform(img)
-            return img, img_hash
+                img_tensor = self.transform(img_tensor)
+            return img_tensor, img_hash
         except Exception as e:
-            return torch.zeros(3, 256, 256), img_hash
+            return torch.zeros(3, 224, 224), img_hash
 
 
 def load_model(model_name):
@@ -105,13 +106,6 @@ def generate_embeddings(image_hashes, model_name, image_dir, embedding_dir):
         model = model_input
 
     model_dir = os.path.join(embedding_dir, model_name)
-    #
-    # existing_files = set(f.split('.')[0] for f in os.listdir(model_dir) if f.endswith('.npy'))
-    # hashes_to_process = [h for h in image_hashes if h not in existing_files]
-    #
-    # if not hashes_to_process:
-    #     print(f"All embeddings for {model_name} already exist. Skipping.")
-    #     return
 
     if model_name in ['resnet50', 'efficientnet_b0']:
         transform = preprocess
