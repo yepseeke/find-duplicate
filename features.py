@@ -52,7 +52,6 @@ def cosine_distance(df, column_a, column_b, model_name, batch_size=128):
     df[model_name] = bert_scores
 
 
-
 def pad_text_pairs_to_equal_length(texts_a: List[str], texts_b: List[str], pad_char: str = " ") \
         -> Tuple[List[str], List[str]]:
     padded_a = []
@@ -126,6 +125,86 @@ def load_model_weights(model: torch.nn.Module, path: str, safetensors: bool = Tr
         state_dict = torch.load(path, map_location=torch.device('cpu'))
 
     model.load_state_dict(state_dict)
+
+
+def build_vector_features(df: pd.DataFrame, vector_folder: str, output_path: str, model_name: str) -> pd.DataFrame:
+    features = []
+
+    for _, row in tqdm(df.iterrows(), total=len(df)):
+        base_hash = row['base_image_title']
+        cand_hash = row['cand_image_title']
+
+        base_path = os.path.join(vector_folder, f"{base_hash}.npy")
+        cand_path = os.path.join(vector_folder, f"{cand_hash}.npy")
+
+        if os.path.exists(base_path) and os.path.exists(cand_path):
+            base_vec = np.load(base_path)
+            cand_vec = np.load(cand_path)
+
+            cosine_sim = cosine_similarity([base_vec], [cand_vec])[0][0]
+            l2_dist = euclidean(base_vec, cand_vec)
+            manhattan_dist = cityblock(base_vec, cand_vec)
+            dot_product = np.dot(base_vec, cand_vec)
+            abs_diff_sum = np.sum(np.abs(base_vec - cand_vec))
+        else:
+            cosine_sim = 0.0
+            l2_dist = 0.0
+            manhattan_dist = 0.0
+            dot_product = 0.0
+            abs_diff_sum = 0.0
+
+        features.append({
+            f'{model_name}_cosine_similarity': cosine_sim,
+            f'{model_name}_l2_distance': l2_dist,
+            f'{model_name}_manhattan_distance': manhattan_dist,
+            f'{model_name}_dot_product': dot_product,
+            f'{model_name}_abs_diff_sum': abs_diff_sum
+        })
+
+    features_df = pd.DataFrame(features)
+    features_df.to_parquet(output_path, index=False)
+    return features_df
+
+
+def features_calculation(df):
+    df['is_same_param1'] = (df['base_param1'] == df['cand_param1']).astype(int)
+    df['is_same_param2'] = (df['base_param2'] == df['cand_param2']).astype(int)
+    df['images_diff'] = df['base_count_images'] - df['cand_count_images']
+    df['base_json_params_parsed'] = df['base_json_params'].apply(lambda x: json.loads(x) if pd.notna(x) else {})
+    df['cand_json_params_parsed'] = df['cand_json_params'].apply(lambda x: json.loads(x) if pd.notna(x) else {})
+    df['common_keys_count'] = df.apply(common_keys, axis=1)
+    df['common_values_count'] = df.apply(common_values, axis=1)
+    df['common_keys_ratio'] = df.apply(common_keys_ratio, axis=1)
+    df['is_same_category'] = (df['base_category_name'] == df['cand_category_name']).astype(int)
+    df['is_same_images_count'] = (df['base_count_images'] == df['cand_count_images']).astype(int)
+    df['title_exact_match'] = (df['base_title'] == df['cand_title']).astype(int)
+    df['title_jaccard'] = df.apply(lambda row: jaccard_similarity(row['base_title'], row['cand_title']), axis=1)
+    df['price_diff'] = df['base_price'] - df['cand_price']
+    df['price_ratio'] = df['base_price'] / df['cand_price'].replace(0, float('inf'))
+    df['base_description_len'] = df['base_description'].str.len()
+    df['cand_description_len'] = df['cand_description'].str.len()
+    df['description_len_diff'] = df['base_description_len'] - df['cand_description_len']
+    df['is_same_title_image'] = (df['base_title_image'] == df['cand_title_image']).astype(int)
+
+    df.to_parquet(output_path, index=False)
+    return df
+
+
+def basic_text_features(df, text_col1, text_col2):
+    df[f'{text_col1}_len'] = df[text_col1].str.len()
+    df[f'{text_col2}_len'] = df[text_col2].str.len()
+    df[f'{text_col1}_{text_col2}_len_diff'] = abs(df[f'{text_col1}_len'] - df[f'{text_col2}_len'])
+    df[f'{text_col1}_ru_chars'] = df[text_col1].apply(lambda x: sum(c.isalpha() and ord(c) > 127 for c in str(x)))
+    df[f'{text_col2}_ru_chars'] = df[text_col2].apply(lambda x: sum(c.isalpha() and ord(c) > 127 for c in str(x)))
+    df[f'{text_col1}_en_chars'] = df[text_col1].apply(lambda x: sum(c.isalpha() and ord(c) < 128 for c in str(x)))
+    df[f'{text_col2}_en_chars'] = df[text_col2].apply(lambda x: sum(c.isalpha() and ord(c) < 128 for c in str(x)))
+    df[f'{text_col1}_digits'] = df[text_col1].apply(lambda x: sum(c.isdigit() for c in str(x)))
+    df[f'{text_col2}_digits'] = df[text_col2].apply(lambda x: sum(c.isdigit() for c in str(x)))
+    df[f'{text_col1}_unique_chars'] = df[text_col1].apply(lambda x: len(set(str(x))))
+    df[f'{text_col2}_unique_chars'] = df[text_col2].apply(lambda x: len(set(str(x))))
+
+    df.to_parquet(output_path, index=False)
+    return df
 
 
 if __name__ == '__main__':
