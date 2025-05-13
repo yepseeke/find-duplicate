@@ -5,7 +5,7 @@ import argparse
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.decomposition import NMF
-import pymorphy2
+import pymorphy3
 from gensim import corpora, models
 from scipy.spatial.distance import cosine, jensenshannon
 from nltk.corpus import stopwords
@@ -15,14 +15,14 @@ from tqdm import tqdm
 import numpy as np
 import nltk
 
-nltk.download('punkt_tab')
-nltk.download('punkt')
-nltk.download('stopwords')
+# nltk.download('punkt_tab')
+# nltk.download('punkt')
+# nltk.download('stopwords')
 
 # df = pd.read_csv('your_data.csv')
 
 stop_words_ru = set(stopwords.words('russian'))
-morph = pymorphy2.MorphAnalyzer()
+morph = pymorphy3.MorphAnalyzer()
 
 def preprocess_ru(text):
     if not isinstance(text, str):
@@ -37,7 +37,7 @@ def preprocess_ru(text):
 
 
 def add_topic_similarity_features(csv_path, model_type=None, text_type=None):
-    df = pd.read_pickle(csv_path)
+    df = pd.read_parquet(csv_path)
     pairs = [('lda', 'title'), ('lda', 'description'), ('nmf', 'title'), ('nmf', 'description')]
     tasks = [(model_type, text_type)] if model_type and text_type else pairs
 
@@ -112,7 +112,7 @@ def run_topic_similarity_pipeline(csv_path, model_type=None, text_type=None):
     output_path = f"{base}_similarity_features{ext}"
 
     # Сохраняем результат
-    df_with_features.to_pickle(output_path, index=False)
+    df_with_features.to_parquet(output_path, index=False)
     print(f"Результат сохранён в файл: {output_path}")
 
 
