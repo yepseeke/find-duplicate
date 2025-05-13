@@ -1,4 +1,5 @@
 import os
+import re
 import argparse
 
 import pandas as pd
@@ -14,6 +15,7 @@ from tqdm import tqdm
 import numpy as np
 import nltk
 
+nltk.download('punkt_tab')
 nltk.download('punkt')
 nltk.download('stopwords')
 
@@ -23,14 +25,19 @@ stop_words_ru = set(stopwords.words('russian'))
 morph = pymorphy2.MorphAnalyzer()
 
 def preprocess_ru(text):
-    tokens = word_tokenize(text.lower(), language='russian')
-    tokens = [t for t in tokens if t.isalpha() and t not in stop_words_ru]
+    if not isinstance(text, str):
+        return []
+
+    clean_text = re.sub(r'[^а-яА-ЯёЁa-zA-Z0-9\-\s%$]+', '', text.lower())
+
+    tokens = word_tokenize(clean_text, language='russian')
+    tokens = [t for t in tokens if (any(c.isalnum() for c in t)) and t not in stop_words_ru]
     lemmas = [morph.parse(t)[0].normal_form for t in tokens]
     return lemmas
 
 
 def add_topic_similarity_features(csv_path, model_type=None, text_type=None):
-    df = pd.read_parquet(csv_path)
+    df = pd.read_pickle(csv_path)
     pairs = [('lda', 'title'), ('lda', 'description'), ('nmf', 'title'), ('nmf', 'description')]
     tasks = [(model_type, text_type)] if model_type and text_type else pairs
 
@@ -105,7 +112,7 @@ def run_topic_similarity_pipeline(csv_path, model_type=None, text_type=None):
     output_path = f"{base}_similarity_features{ext}"
 
     # Сохраняем результат
-    df_with_features.to_parquet(output_path, index=False)
+    df_with_features.to_pickle(output_path, index=False)
     print(f"Результат сохранён в файл: {output_path}")
 
 
