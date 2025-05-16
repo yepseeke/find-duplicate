@@ -45,7 +45,7 @@ transform = transforms.Compose([
 def load_image(image_path):
     try:
         image = Image.open(image_path).convert('RGB')
-        return transform(image).unsqueeze(0).to(DEVICE)
+        return transform(image).unsqueeze(0)
     except Exception as e:
         print(f"Warning: Failed to load image {image_path}: {e}")
         return None
