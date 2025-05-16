@@ -15,6 +15,22 @@ from PIL import Image
 import numpy as np
 
 
+BATCH_SIZE = 64
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+default_values = {
+    "cosine_similarity": 0.0,
+    "dot_product": 0.0,
+    "euclidean_distance": 1e6,
+    "manhattan_distance": 1e6,
+    "chebyshev_distance": 1e6,
+    "pearson_correlation": 0.0,
+    "mean_absolute_difference": 1e6,
+    "ratio_norms": 1.0,
+    "projection_length": 0.0,
+    "zero_crossings": 0
+}
+
 transform = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
@@ -25,7 +41,6 @@ transform = transforms.Compose([
     )
 ])
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def load_image(image_path):
     try:
@@ -34,6 +49,13 @@ def load_image(image_path):
     except Exception as e:
         print(f"Warning: Failed to load image {image_path}: {e}")
         return None
+
+
+def safe_load_tensor(image_path):
+    if not os.path.exists(image_path):
+        return None
+    tensor = load_image(image_path)
+    return tensor
 
 
 def get_feature_extractor(model, model_name):
@@ -65,7 +87,7 @@ def extract_features(model, image_tensor):
     with torch.no_grad():
         features = model(image_tensor)
         features = torch.flatten(features, 1)
-    return features.squeeze().cpu().numpy()
+    return features.cpu().numpy()
 
 
 def euclidean_distance(vec1, vec2):
@@ -124,50 +146,46 @@ def process_dataframe(df, models_dict, image_dir):
             "zero_crossings": []
         }
 
-        for row in tqdm(df.itertuples(index=False), total=len(df), desc=f"Processing {model_name}"):
-            base_path = os.path.join(image_dir, f"{row.base_title_image}.jpg")
-            cand_path = os.path.join(image_dir, f"{row.cand_title_image}.jpg")
+        for i in tqdm(range(0, len(df), BATCH_SIZE), desc=f"Processing {model_name}"):
+            batch = df.iloc[i:i + BATCH_SIZE]
 
-            if not os.path.exists(base_path) or not os.path.exists(cand_path):
-                metrics["cosine_similarity"].append(0.0)
-                metrics["dot_product"].append(0.0)
-                metrics["euclidean_distance"].append(1e6)
-                metrics["manhattan_distance"].append(1e6)
-                metrics["chebyshev_distance"].append(1e6)
-                metrics["pearson_correlation"].append(0.0)
-                metrics["mean_absolute_difference"].append(1e6)
-                metrics["ratio_norms"].append(1.0)
-                metrics["projection_length"].append(0.0)
-                metrics["zero_crossings"].append(0)
-                continue
+            base_paths = [os.path.join(image_dir, f"{row.base_title_image}.jpg") for row in batch.itertuples()]
+            cand_paths = [os.path.join(image_dir, f"{row.cand_title_image}.jpg") for row in batch.itertuples()]
 
-            base_tensor = load_image(base_path)
-            cand_tensor = load_image(cand_path)
+            base_tensors = []
+            cand_tensors = []
+            valid_mask = []
 
-            if base_tensor is None or cand_tensor is None:
-                metrics["cosine_similarity"].append(0.0)
-                metrics["dot_product"].append(0.0)
-                metrics["euclidean_distance"].append(1e6)
-                metrics["manhattan_distance"].append(1e6)
-                metrics["chebyshev_distance"].append(1e6)
-                metrics["pearson_correlation"].append(0.0)
-                metrics["mean_absolute_difference"].append(1e6)
-                metrics["ratio_norms"].append(1.0)
-                metrics["projection_length"].append(0.0)
-                metrics["zero_crossings"].append(0)
-                continue
+            for b_path, c_path in zip(base_paths, cand_paths):
+                b_tensor = safe_load_tensor(b_path)
+                c_tensor = safe_load_tensor(c_path)
+                if b_tensor is None or c_tensor is None:
+                    valid_mask.append(False)
+                    base_tensors.append(torch.zeros((3, 224, 224)))
+                    cand_tensors.append(torch.zeros((3, 224, 224)))
+                else:
+                    valid_mask.append(True)
+                    base_tensors.append(b_tensor.squeeze(0))
+                    cand_tensors.append(c_tensor.squeeze(0))
 
-            vec1 = extract_features(model, base_tensor).reshape(-1)
-            vec2 = extract_features(model, cand_tensor).reshape(-1)
+            # Stack into batches
+            base_batch = torch.stack(base_tensors).to(DEVICE)
+            cand_batch = torch.stack(cand_tensors).to(DEVICE)
 
-            feats = feature_vector(vec1, vec2)
-            if feats is None:
-                for key in metrics.keys():
-                    metrics[key].append(np.nan)
-                continue
+            # Extract features in batch
+            base_vecs = extract_features(model, base_batch)  # modify extract_features to handle batches
+            cand_vecs = extract_features(model, cand_batch)
 
-            for key, val in feats.items():
-                metrics[key].append(val)
+            # Process each pair in batch
+            for j, is_valid in enumerate(valid_mask):
+                if not is_valid:
+                    for key in metrics:
+                        metrics[key].append(default_values[key])
+                    continue
+
+                feats = feature_vector(base_vecs[j], cand_vecs[j])
+                for key, val in feats.items():
+                    metrics[key].append(val)
 
         for key, vals in metrics.items():
             df[f"{model_name}-{key}"] = vals
