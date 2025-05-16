@@ -48,7 +48,6 @@ def load_models():
         "resnet18": models.resnet18(weights=models.ResNet18_Weights.DEFAULT),
         "resnet50": models.resnet50(weights=models.ResNet50_Weights.DEFAULT),
         "vgg11": models.vgg11(weights=models.VGG11_Weights.DEFAULT),
-        "efficientnet_b0": models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT),
         "densenet121": models.densenet121(weights=models.DenseNet121_Weights.DEFAULT)
     }
 
