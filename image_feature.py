@@ -29,7 +29,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def load_image(image_path):
     image = Image.open(image_path).convert('RGB')
-    return transform(image).unsqueeze(0)
+    return transform(image).unsqueeze(0).to(DEVICE)
 
 
 def get_feature_extractor(model, model_name):
