@@ -171,7 +171,7 @@ def main():
 
     df = process_dataframe(df, models_dict, args.image_dir)
 
-    output_path = args.output_path or args.df_path.replace(".parquet", "_features.parquet")
+    output_path = args.output_path or args.df_path.replace(".parquet", "_image_features.parquet")
     df.to_parquet(output_path, index=False)
     print(f"Saved DataFrame with features to: {output_path}")
 
