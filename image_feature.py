@@ -28,8 +28,12 @@ transform = transforms.Compose([
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def load_image(image_path):
-    image = Image.open(image_path).convert('RGB')
-    return transform(image).unsqueeze(0).to(DEVICE)
+    try:
+        image = Image.open(image_path).convert('RGB')
+        return transform(image).unsqueeze(0).to(DEVICE)
+    except Exception as e:
+        print(f"Warning: Failed to load image {image_path}: {e}")
+        return None
 
 
 def get_feature_extractor(model, model_name):
@@ -139,6 +143,19 @@ def process_dataframe(df, models_dict, image_dir):
 
             base_tensor = load_image(base_path)
             cand_tensor = load_image(cand_path)
+
+            if base_tensor is None or cand_tensor is None:
+                metrics["cosine_similarity"].append(0.0)
+                metrics["dot_product"].append(0.0)
+                metrics["euclidean_distance"].append(1e6)
+                metrics["manhattan_distance"].append(1e6)
+                metrics["chebyshev_distance"].append(1e6)
+                metrics["pearson_correlation"].append(0.0)
+                metrics["mean_absolute_difference"].append(1e6)
+                metrics["ratio_norms"].append(1.0)
+                metrics["projection_length"].append(0.0)
+                metrics["zero_crossings"].append(0)
+                continue
 
             vec1 = extract_features(model, base_tensor).reshape(-1)
             vec2 = extract_features(model, cand_tensor).reshape(-1)
