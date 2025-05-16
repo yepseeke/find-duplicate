@@ -124,9 +124,9 @@ def process_dataframe(df, models_dict, image_dir):
             "zero_crossings": []
         }
 
-        for _, row in tqdm(df.iterrows(), total=len(df), desc=f"Processing {model_name}"):
-            base_path = os.path.join(image_dir, f"{row['base_title_image']}.jpg")
-            cand_path = os.path.join(image_dir, f"{row['cand_title_image']}.jpg")
+        for row in tqdm(df.itertuples(index=False), total=len(df), desc=f"Processing {model_name}"):
+            base_path = os.path.join(image_dir, f"{row.base_title_image}.jpg")
+            cand_path = os.path.join(image_dir, f"{row.cand_title_image}.jpg")
 
             if not os.path.exists(base_path) or not os.path.exists(cand_path):
                 metrics["cosine_similarity"].append(0.0)
