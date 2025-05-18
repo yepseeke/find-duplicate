@@ -70,11 +70,20 @@ def get_feature_extractor(model, model_name):
     elif "densenet" in model_name:
         return torch.nn.Sequential(model.features, torch.nn.AdaptiveAvgPool2d((1, 1)))
     elif "inception" in model_name:
-        return torch.nn.Sequential(*list(model.children())[:-1])
+        class InceptionWrapper(torch.nn.Module):
+            def __init__(self, model):
+                super().__init__()
+                self.model = model
+
+            def forward(self, x):
+                out, _ = self.model(x)
+                return out
+        return InceptionWrapper(model)
     elif "efficientnet" in model_name:
         return model.features
     else:
         raise ValueError(f"Unknown model: {model_name}")
+
 
 
 def load_models():
