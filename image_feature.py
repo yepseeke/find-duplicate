@@ -8,7 +8,6 @@ from scipy.stats import pearsonr
 from tqdm import tqdm
 
 import pandas as pd
-from sklearn.metrics.pairwise import cosine_similarity
 import torchvision.models as models
 import torchvision.transforms as transforms
 from PIL import Image
@@ -31,18 +30,23 @@ default_values = {
     "zero_crossings": 0
 }
 
-transform = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225]
-    )
-])
+
+def get_transform(model_name):
+    size = 299 if "inception" in model_name else 224
+    resize_size = int(size * 1.14)
+
+    return transforms.Compose([
+        transforms.Resize(resize_size),
+        transforms.CenterCrop(size),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225]
+        )
+    ])
 
 
-def load_image(image_path):
+def load_image(image_path, transform):
     try:
         image = Image.open(image_path).convert('RGB')
         return transform(image).unsqueeze(0)
@@ -51,10 +55,10 @@ def load_image(image_path):
         return None
 
 
-def safe_load_tensor(image_path):
+def safe_load_tensor(image_path, transform):
     if not os.path.exists(image_path):
         return None
-    tensor = load_image(image_path)
+    tensor = load_image(image_path, transform)
     return tensor
 
 
@@ -65,16 +69,21 @@ def get_feature_extractor(model, model_name):
         return model.features
     elif "densenet" in model_name:
         return torch.nn.Sequential(model.features, torch.nn.AdaptiveAvgPool2d((1, 1)))
+    elif "inception" in model_name:
+        return torch.nn.Sequential(*list(model.children())[:-1])
+    elif "efficientnet" in model_name:
+        return model.features
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
 
 def load_models():
     models_dict = {
-        "resnet18": models.resnet18(weights=models.ResNet18_Weights.DEFAULT),
-        "resnet50": models.resnet50(weights=models.ResNet50_Weights.DEFAULT),
-        "vgg11": models.vgg11(weights=models.VGG11_Weights.DEFAULT),
-        "densenet121": models.densenet121(weights=models.DenseNet121_Weights.DEFAULT)
+        "resnet152": models.resnet152(weights=models.ResNet152_Weights.DEFAULT),
+        "vgg19_bn": models.vgg19_bn(weights=models.VGG19_BN_Weights.DEFAULT),
+        "densenet201": models.densenet201(weights=models.DenseNet201_Weights.DEFAULT),
+        "inception_v3": models.inception_v3(weights=models.Inception_V3_Weights.DEFAULT, aux_logits=False),
+        "efficientnet_b7": models.efficientnet_b7(weights=models.EfficientNet_B7_Weights.DEFAULT),
     }
 
     for name in models_dict.keys():
@@ -106,7 +115,7 @@ def feature_vector(vec1, vec2):
     vec1 = vec1.flatten()
     vec2 = vec2.flatten()
 
-    cos_sim = np.dot(vec1, vec2) / (np.linalg.norm(vec1)*np.linalg.norm(vec2))
+    cos_sim = np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
     dot = np.dot(vec1, vec2)
     eucl = np.linalg.norm(vec1 - vec2)
     manh = np.sum(np.abs(vec1 - vec2))
@@ -131,8 +140,11 @@ def feature_vector(vec1, vec2):
     }
 
 
-def process_dataframe(df, models_dict, image_dir):
+def process_dataframe(df, models_dict, image_dir, df_path):
     for model_name, model in models_dict.items():
+        transform = get_transform(model_name)
+        img_size = 299 if 'inception' in model_name else 224
+
         metrics = {
             "cosine_similarity": [],
             "dot_product": [],
@@ -157,12 +169,12 @@ def process_dataframe(df, models_dict, image_dir):
             valid_mask = []
 
             for b_path, c_path in zip(base_paths, cand_paths):
-                b_tensor = safe_load_tensor(b_path)
-                c_tensor = safe_load_tensor(c_path)
+                b_tensor = safe_load_tensor(b_path, transform)
+                c_tensor = safe_load_tensor(c_path, transform)
                 if b_tensor is None or c_tensor is None:
                     valid_mask.append(False)
-                    base_tensors.append(torch.zeros((3, 224, 224)))
-                    cand_tensors.append(torch.zeros((3, 224, 224)))
+                    base_tensors.append(torch.zeros((3, img_size, img_size)))
+                    cand_tensors.append(torch.zeros((3, img_size, img_size)))
                 else:
                     valid_mask.append(True)
                     base_tensors.append(b_tensor.squeeze(0))
@@ -190,6 +202,9 @@ def process_dataframe(df, models_dict, image_dir):
         for key, vals in metrics.items():
             df[f"{model_name}-{key}"] = vals
 
+        output_path = df_path.replace(".parquet", "_image_features_temp.parquet")
+        df.to_parquet(output_path, index=False)
+
     return df
 
 
@@ -204,7 +219,7 @@ def main():
     df = pd.read_parquet(args.df_path)
     models_dict = load_models()
 
-    df = process_dataframe(df, models_dict, args.image_dir)
+    df = process_dataframe(df, models_dict, args.image_dir, args.df_path)
 
     output_path = args.output_path or args.df_path.replace(".parquet", "_image_features.parquet")
     df.to_parquet(output_path, index=False)
