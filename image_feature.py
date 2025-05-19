@@ -76,8 +76,11 @@ def get_feature_extractor(model, model_name):
                 self.model = model
 
             def forward(self, x):
-                out, _ = self.model(x)
+                out = self.model(x)
+                if isinstance(out, tuple):
+                    out = out[0]
                 return out
+
         return InceptionWrapper(model)
     elif "efficientnet" in model_name:
         return model.features
