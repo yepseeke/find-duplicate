@@ -102,6 +102,11 @@ def add_topic_similarity_features(csv_path, model_type=None, text_type=None):
             axis=1, result_type='expand'
         )
 
+        base, ext = os.path.splitext(csv_path)
+        output_path = f"{base}_similarity_features{ext}"
+        print(model_name, field)
+        df.to_parquet(output_path, index=False)
+
     return df
 
 def run_topic_similarity_pipeline(csv_path, model_type=None, text_type=None):
