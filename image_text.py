@@ -1,6 +1,7 @@
 import os
 import cv2
 import pandas as pd
+from tqdm import tqdm
 from paddleocr import PaddleOCR
 
 def batch_ocr(image_paths, ocr):
@@ -11,32 +12,26 @@ def batch_ocr(image_paths, ocr):
     images_to_process = []
     indices_map = []  # Чтобы знать, к каким позициям в batch относится каждый валидный файл
 
-    # Проверяем каждое изображение
     for idx, path in enumerate(image_paths):
         if not os.path.isfile(path):
-            # Файл отсутствует
             continue
         img = cv2.imread(path)
         if img is None:
-            # Файл битый или не читается
             continue
         images_to_process.append(path)
         indices_map.append(idx)
 
-    texts = [""] * len(image_paths)  # Итоговый список текстов, по умолчанию пустые
+    texts = [""] * len(image_paths)  # Изначально пустые
 
     if not images_to_process:
         return texts
 
-    # Запускаем OCR по валидным файлам
     try:
         ocr_results = ocr.ocr(images_to_process, cls=True)
     except Exception as e:
-        # Если вдруг OCR упал, возвращаем пустые строки для всех валидных файлов
         print(f"Ошибка OCR: {e}")
         return texts
 
-    # Записываем результаты
     for idx, result in zip(indices_map, ocr_results):
         lines = []
         for line in result:
@@ -56,7 +51,10 @@ def process_parquet(df_path, images_folder, batch_size=16, save_path=None):
     base_texts = []
     cand_texts = []
 
-    for i in range(0, len(df), batch_size):
+    num_batches = (len(df) + batch_size - 1) // batch_size
+
+    print("📦 Обработка изображений с OCR:")
+    for i in tqdm(range(0, len(df), batch_size), total=num_batches, desc="Обработка батчей"):
         base_batch = base_image_paths[i:i+batch_size]
         cand_batch = cand_image_paths[i:i+batch_size]
 
@@ -68,7 +66,7 @@ def process_parquet(df_path, images_folder, batch_size=16, save_path=None):
 
     if save_path:
         df.to_parquet(save_path, index=False)
-        print(f"Сохранено в {save_path}")
+        print(f"✅ Сохранено в: {save_path}")
 
     return df
 
