@@ -1,10 +1,10 @@
+import os
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import average_precision_score
 from catboost import CatBoostClassifier, Pool
 import optuna
-from optuna.integration import TQDMCallback
 from tqdm import tqdm
 
 # Загрузка данных
@@ -65,18 +65,38 @@ def objective(trial):
     preds = model.predict_proba(X_val)[:, 1]
     return average_precision_score(y_val, preds)
 
+# Подбор с сохранением лучших моделей
 study = optuna.create_study(direction="maximize")
-study.optimize(objective, n_trials=30, callbacks=[TQDMCallback(n_trials=30)])
+N_TRIALS = 30
+os.makedirs("best_models", exist_ok=True)
+best_score = -1
 
+for i in tqdm(range(N_TRIALS), desc="Optuna trials"):
+    study.optimize(objective, n_trials=1, catch=(Exception,))
+    current_score = study.best_value
+    if current_score > best_score:
+        best_score = current_score
+        best_params = study.best_params
+
+        # Обучаем и сохраняем новую лучшую модель
+        best_model = CatBoostClassifier(**best_params, random_seed=42, verbose=0, cat_features=cat_features, task_type='GPU')
+        best_model.fit(Pool(X_train, y_train, cat_features=cat_features))
+
+        model_path = f"best_models/model_trial_{i+1}_score_{best_score:.4f}.cbm"
+        best_model.save_model(model_path)
+        print(f"✔ Saved new best model to {model_path} with score = {best_score:.4f}")
+
+# Финальная модель из лучших параметров
 final_model = CatBoostClassifier(**study.best_params, random_seed=42, verbose=100, cat_features=cat_features, task_type='GPU')
 final_model.fit(Pool(X_train, y_train, cat_features=cat_features))
 
-# Сохранение результатов
+# Сохранение важности признаков
 feat_imp = pd.DataFrame({
     "feature": X_train.columns,
     "importance": final_model.get_feature_importance(type='PredictionValuesChange')
 }).sort_values("importance", ascending=False)
 feat_imp.to_csv("feature_importance.csv", index=False)
 
+# Предсказания на тесте
 preds_test = final_model.predict_proba(X_test)[:, 1]
 pd.DataFrame({ "prediction": preds_test }).to_csv("test_predictions.csv", index=False)
